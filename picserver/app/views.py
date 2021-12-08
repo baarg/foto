@@ -10,6 +10,8 @@ from cryptography.fernet import Fernet
 from django.db.models import Q
 
 from .form import userForm, userLoginForm
+
+import numpy as np
 # Create your ssviews here.
 
 
@@ -49,34 +51,47 @@ def Home(request):
     user = None
     if request.session.get('userName', None):
         user = User.objects.get(userName = request.session['userName'])
-        tags = user.tagsLike.all()[:5]
-        imagesByTag = Image.objects.filter(tags__in= tags)
-        ls = []
-        for i in imagesByTag.values_list('id'):
-            ls.append(i[0])
-        custom = 5
-        if len(imagesByTag ) < 5:
-            custom = len(imagesByTag)
-        randomIndeces = random.sample(ls, custom) 
-        imagesByTag = Image.objects.filter(id__in=imagesByTag.values_list('id'))
-        imagesByTag = imagesByTag.filter(id__in=randomIndeces)
+        tags = user.tagsLike.all()
+        ls = None
+        if tags.exists():
+            imagesByTag = Image.objects.filter(tags__in= tags)
 
-        data = imagesByTag
+            ls = np.array(imagesByTag.values_list('id'))
+            np.random.shuffle(ls)
+            ls = ls[:4]
+        else :
+            ls = np.array([[1]])
+            images = Image.objects.all().values_list('id')
+            arr = np.array(images)
+            np.random.shuffle(arr)
+            ls = arr[:5]
+     
+        imagesByLikes = Image.objects.all().order_by('-likes')
+        lst = np.array(imagesByLikes.values_list('id'))
+        np.random.shuffle(lst)
+        ls = np.concatenate([ls, lst[:5]], axis=0)
 
-        imagesByLikes = Image.objects.filter(~Q(id__in=imagesByTag.values_list('id'))).order_by('-likes')[:random.randrange(6)]
+        imagesByDate = Image.objects.order_by('-imageDate')
+        lst = np.array(imagesByDate.values_list('id'))[:7]
+        np.random.shuffle(lst)
+        ls = np.concatenate([ls, lst[:5]], axis=0)
 
-        data = data | imagesByLikes
 
-        imagesByDate = Image.objects.filter(~Q(id__in=data.values_list('id')))
-        imagesByDate = imagesByDate.order_by('-imageDate')[:random.randrange(6)]
+        imagesByFollowing = Image.objects.filter(user__id__in=user.following.values_list('id')).order_by('-imageDate')
 
-        data = data | imagesByDate
+        lst = np.array(imagesByFollowing.values_list('id'))[:7]
+        np.random.shuffle(lst)
+        ls = np.concatenate([ls, lst[:5]], axis=0)
 
-        imagesByFollowing = Image.objects.filter(~Q(id__in=data.values_list('id')))
-        imagesByFollowing = imagesByFollowing.filter(user__id__in=user.following.values_list('id'))[:random.randrange(6)]
-
-        data = data | imagesByFollowing
-
+        ls= np.unique(ls)
+        data = Image.objects.filter(id__in=ls)
+   
+    else:
+        images = Image.objects.all().values_list('id')
+        arr = np.array(images)
+        np.random.shuffle(arr)
+        imgs = Image.objects.filter(id__in=arr[:15])
+        data = imgs
     if request.method=='GET':
         if request.GET.get('search'):  
             ser = request.GET['search'].strip()
@@ -85,7 +100,6 @@ def Home(request):
             imgs = imgs.filter(tags__in=tags)
             return render(request, 'index.html', {'data':imgs, 'user':user})
     ourpicks = Image.objects.filter(inOurPicks=True)
-    print(ourpicks)
     return render(request, 'index.html', {'data':data,  'ourpicks':ourpicks, 'user':user})
 
 def userProfile(request, username):
@@ -104,7 +118,7 @@ def imageView(request, id):
         user.tagsLike.add(*image.tags.all())
         user.save()
 
-    return render(request, 'imageView.html', {'img':image})
+    return render(request, 'photo.html', {'img':image})
 
 
 def register(request):
@@ -300,7 +314,7 @@ def imageApi(request):
         images.append({'id':i.id,'img':i.image.url})
     return JsonResponse(images, safe=False)
 def imageResponse(request, id):
-    if request.method == "POST":
+    if request.is_ajax:
         if request.session['userName']:
             o = Image.objects.get(id=id)
             # user= User.objects.get(userName= request.session['userName'])
@@ -314,4 +328,7 @@ def imageResponse(request, id):
             o.save()
 
     return HttpResponseRedirect('/')
-    
+def resLike(request, id):
+    image = Image.objects.get(id=id)
+    print('s')
+    return JsonResponse({'likes':image.likes})
